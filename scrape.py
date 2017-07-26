@@ -19,7 +19,6 @@ FLAGS = {
 	"export_scraped": True, # Write scraped dev/game data
 	"export_scores": True, # Write raw score data
 	"export_archive": True, # Write formatted scoring list with archive-related data
-	# "export_recap": False # Write recap post which includes trimmed scoring list
 }
 
 now = datetime.now()
@@ -48,14 +47,10 @@ def query(filter, string, progress):
 		result = result.replace('<wbr>', '')
 		result = result.replace('&amp;', '&')
 		result = result.replace('</span>', '') # Fix for when people greentext the form
-		# result = result.replace('<br>', '') # Fix (sort of) for when people add line breaks
 		if progress:
 			temp = result
 			filter = 'br>(.+?)<|br>(.+?)$'
 			result = re.findall(filter, temp)
-			# if len(result) > 0:
-			#	result[0] = result[0].replace('< span class="quote">>', '')
-			#	result[1] = result[1].replace('< span class="quote">>', '')
 	except AttributeError:
 		result = ''
 	return result
@@ -79,7 +74,6 @@ score_dict = {}
 # open('scores.txt', 'w').close() # Uncomment to reset scores
 scores = open('score_data.txt', 'r').readlines()
 for line in scores:
-	# print('line...')
 	string = line.split('#')
 	string[5] = string[5].replace('\n', '')
 	reset = int(string[4]) - SCALE
@@ -112,7 +106,6 @@ for thread in threads:
 			ext = ''
 			tim = ''
 			if not ('tim' in post):
-				# img_url = 'https://my.mixtape.moe/fdqkwe.png'
 				img_url = 'https://my.mixtape.moe/scaxyw.png'
 				ext = '.png'
 				tim = last_tim + tim_offset
@@ -134,9 +127,6 @@ for thread in threads:
 
 			# Recap form optional args
 			dev['title_change'] = query('NEW_TITLE:(.+?)<br>', comment, 0)
-			# dev['color'] = query('Color:(.+?)<br>', comment, 0)
-			# dev['halloween'] = query('Halloween:(.+?)<br>', comment, 0)
-			# dev['holidays'] = query('Holidays:(.+?)<br>', comment, 0)
 
 			dev['progress'] = []
 			temp = query('Progress:(.*)', comment, 1)
@@ -147,9 +137,6 @@ for thread in threads:
 					dev['progress'].append(format(item[0]))
 				else:
 					dev['progress'].append(format(item[1]))
-
-			# Remove # prefix if present
-			# dev['color'].replace('#', '')
 
 			# Increase score
 			new = False
@@ -215,9 +202,6 @@ if FLAGS.get("export_scraped"):
 		# Commit dev data
 		open(dev['dat_path'], 'w').close()
 		with open(dev['dat_path'], 'a') as output:
-			# output.write(dev['color'] + '\n')
-			# output.write(dev['halloween'] + '\n')
-			# output.write(dev['holidays'] + '\n')
 			output.write('\n')
 			output.write(dev['scoring'] + '\n')
 			output.write(dev['game'] + '\n')
@@ -232,7 +216,6 @@ if FLAGS.get("export_scores"):
 	open('score_data.txt', 'w').close()
 	with open('score_data.txt', 'w') as output:
 		for game, dev_dict in score_dict.items():
-			# print('parsing item...')
 			output.write(game + '#' +
 				str(dev_dict.get("score"))+ '#' +
 				str(dev_dict.get("mult")) + '#' +
@@ -293,30 +276,3 @@ if FLAGS.get("export_archive"):
 		tier_iter('[ 1 - 199 ]', tiers.get("one"), True)
 	# Scores archive backup
 	shutil.copy2('score_archive.txt', '_archives/scores/score_archive_' + date + '.txt')
-
-# Recap post export
-if FLAGS.get("export_recap"):
-	open('recap.txt','w').close()
-	with open('recap.txt', 'w') as output:
-		# Recap info
-		output.write('-------- AGDG WEEKLY RECAP --------\n' +
-		'Fill out the form to be a part of the weekly progress recap. Be sure to check out the "read me" link for important information on scoring and formatting.\n'
-		'Submissions will be accepted for at least the next 36 hours.\n\n' +
-		'-------- FORMAT\n' +
-		'----[ Recap ]----\n' +
-		'Game:\nDev:\nTools:\nWeb:\nProgress:\n+ ...\n- ...\n\n' +
-		# 'Formatting tips\n(link)\n\n' +
-		'-------- LINKS\n' +
-		'Read me: pastebin.com/QA047M2e\n' +
-		'Recap archive: dropbox.com/sh/icm5ng2zs8p24uh/AACC61OsXzCgl6-9Vdwb4sRAa\n' +
-		'Scores archive: pastebin.com/AmFmLeAy\n\n' +
-		'-------- SCORES\n')
-		# Scores
-		tiers = load_tiers(True)
-		tier_iter('[ 1000+ ]', tiers.get("four"), False)
-		tier_iter('[ 500 - 999 ]', tiers.get("three"), False)
-		tier_iter('[ 200 - 499 ]', tiers.get("two"), False)
-		tier_iter('[ 1 - 199 ]', tiers.get("one"), True)
-		# Recap info (cont.)
-		output.write('\n-------- FEEDBACK\n' +
-		'Notice something wrong with your entry, score, or anything else? Let me know and I\'ll look into it.')
