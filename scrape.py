@@ -15,15 +15,16 @@ score_interval = 5
 mult_interval = 0.5
 max_mult = 10.0
 streak_interval = 1
-scale = 1
+scale = 0
 flags = {
-	"export_scores": False, # Write raw score data
+	"run": True,
+	"export_scores": True, # Write raw score data
 	"export_archive": True, # Write formatted scoring list
-	"export_scraped": False # Write scraped data including images and json
+	"export_scraped": True # Write scraped data including images and json
 }
 now = datetime.now()
 date = str(now.month) + "." + str(now.day) + "." + str(now.year)
-parent = "2017/" + date
+parent = str(now.year) + "/" + date
 fake_time = 1483976641887
 devs = [] # Container for all devs participating this week
 ignore = [] # Set of game names to ignore for this pass if people submit entries twice for some reason
@@ -35,7 +36,7 @@ def clamp(arg, value, flip = 1):
 	else:
 		return arg
 
-def query(filter, string, progress):
+def query(filter, string, progress = 0):
 	try:
 		result = re.search(filter, string).group(1).strip()
 		# Replace special characters
@@ -48,19 +49,19 @@ def query(filter, string, progress):
 		result = result.replace("</span>", "")
 		if progress:
 			temp = result
-			filter = "br>(.+?)<|br>(.+?)$"
+			filter = "(.*?)<br>|(.*?)$"
 			result = re.findall(filter, temp)
 	except AttributeError:
 		result = ""
 	return result
 
-def format(item):
+def format(string):
 	# Enforce at least one space between progress marker and text
-	if item[1] != " ":
-		item = item[0:1] + " " + item[1:]
-	return item
+	if string[1] != " ":
+		string = string[0:1] + " " + string[1:]
+	return string
 
-def process(post):
+def process(post, count):
 	dev = {}
 	# Get correct image
 	url = "https://my.mixtape.moe/scaxyw.png"
@@ -74,24 +75,23 @@ def process(post):
 			dev["ext"] = "s.jpg"
 		url = url + dev["ext"]
 	dev["image"] = get(url)
-	print("Fetch: " +  dev["tim"] + dev["ext"])
+	print("Fetch: " + dev["tim"] + dev["ext"] + " [" + str(count).zfill(2) + "]")
 	if dev["image"].status_code != success:
 		raise Exception("Bad image URL")
 	# Get data from fields
 	comment = post["com"]
-	dev["game"] = query("Game:(.+?)<br>", comment, 0)
-	dev["name"] = query("Dev:(.+?)<br>", comment, 0)
-	dev["tools"] = query("Tools:(.+?)<br>", comment, 0)
-	dev["web"] = query("Web:(.+?)<br>", comment, 0)
+	dev["game"] = query("Game:(.*?)<br>", comment)
+	dev["name"] = query("Dev:(.*?)<br>", comment)
+	dev["tools"] = query("Tools:(.*?)<br>", comment)
+	dev["web"] = query("Web:(.*?)<br>", comment)
 	dev["progress"] = []
-	list = query("Progress:(.*)", comment, 1)
+	list = query("Progress:<br>(.*?)(?=[<][a]|$)", comment, 1)
 	for item in list:
-		if len(item[0]) > 0:
-			dev["progress"].append(format(item[0]))
-		else:
-			dev["progress"].append(format(item[1]))
+		for string in item:
+			if string != "":
+				dev["progress"].append(format(string))
 	# Optional form args
-	dev["*game"] = query("\*Game:(.+?)<br>", comment, 0)
+	dev["*game"] = query("\*Game:(.*?)<br>", comment, 0)
 	return dev
 
 def scoring(dev):
@@ -115,7 +115,7 @@ def scoring(dev):
 	if reset < 0:
 		returning = True
 		reset, mult, streak = 0, 1.0, 0
-	reset = reset + 1
+	reset = reset + scale
 	inactive = 0
 	if not new:
 		score = score + int(score_interval * scale * mult)
@@ -134,33 +134,42 @@ def scoring(dev):
 		scoring = scoring + " - " + str(streak) + " streak"
 	dev["scoring"] = scoring
 
-# Load scoring data
-with open("scores.json") as file:
-	score_dict = json.load(file)
-	for game, dict in score_dict.items():
-		dict["reset"] = str(clamp(int(dict["reset"]) - 1, -1))
-		dict["inactive"] = str(int(dict["inactive"]) + scale)
-
-# Get threads to scrape, then scrape them
-threads = open("threads.txt", "r").readlines()
-for thread in threads:
-	url = "https://a.4cdn.org/vg/thread/" + thread.rstrip() + ".json"
-	# Fetch thread URL data
-	thread = get(url)
-	if thread.status_code != success:
-		raise Exception("Bad thread URL")
-	# Process thread data
-	data = json.loads(thread.text)
-	for post in data["posts"]:
-		if ("com" in post) and (recap in post["com"]) and not (exclude in post["com"]):
-			dev = process(post)
-			scoring(dev)
-			# Skip duplicate entries
-			if not (dev["game"] in ignore):
-				ignore.append(dev["game"])
-			else:
-				continue
-			devs.append(dev)
+if flags.get("run"):
+	# Load scoring data
+	with open("scores.json") as file:
+		score_dict = json.load(file)
+		for game, dict in score_dict.items():
+			dict["reset"] = str(clamp(int(dict["reset"]) - scale, -1))
+			dict["inactive"] = str(int(dict["inactive"]) + scale)
+	# In case of a Happy New Year
+	if not os.path.isdir(str(now.year)):
+		os.makedirs(str(now.year))
+	# Get threads to scrape, then scrape them
+	count = 0
+	newl = ""
+	threads = open("threads.txt", "r").readlines()
+	for thread in threads:
+		num = thread.rstrip()
+		url = "https://a.4cdn.org/vg/thread/" + num + ".json"
+		# Fetch thread URL data
+		thread = get(url)
+		if thread.status_code != success:
+			raise Exception("Bad thread URL")
+		# Process thread data
+		print(newl + "[ Thread: " + num + " ]")
+		newl = "\n"
+		data = json.loads(thread.text)
+		for post in data["posts"]:
+			if ("com" in post) and (recap in post["com"]) and not (exclude in post["com"]):
+				count += 1
+				dev = process(post, count)
+				scoring(dev)
+				# Skip duplicate entries
+				if not (dev["game"] in ignore):
+					ignore.append(dev["game"])
+				else:
+					continue
+				devs.append(dev)
 
 if flags.get("export_scraped"):
 	if not os.path.isdir(parent):
@@ -190,7 +199,7 @@ if flags.get("export_scores"):
 	# Store copy in week folder and root folder
 	shutil.copy2("scores.json", parent + "/scores.json")
 
-def tier_iter(range_token, set, last_tier):
+def tier_iter(range_token, set, last_tier = False):
 	output.write(range_token + "\n")
 	sort = {}
 	for game in set:
@@ -232,7 +241,7 @@ if flags.get("export_archive"):
 	open("scores.txt", "w").close()
 	with open("scores.txt", "w") as output:
 		tiers = load_tiers(False)
-		tier_iter("[ 1000+ ]", tiers.get("four"), False)
-		tier_iter("[ 500 - 999 ]", tiers.get("three"), False)
-		tier_iter("[ 200 - 499 ]", tiers.get("two"), False)
+		tier_iter("[ 1000+ ]", tiers.get("four"))
+		tier_iter("[ 500 - 999 ]", tiers.get("three"))
+		tier_iter("[ 200 - 499 ]", tiers.get("two"))
 		tier_iter("[ 1 - 199 ]", tiers.get("one"), True)
