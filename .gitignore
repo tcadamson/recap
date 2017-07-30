@@ -1,7 +1,3 @@
-#Directories
-2017/*
-archives/*
-
-#Unimportant
+*/*
 threads.txt
-score_archive.txt
+scores.txt
