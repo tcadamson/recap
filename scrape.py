@@ -15,12 +15,13 @@ score_interval = 5
 mult_interval = 0.5
 max_mult = 10.0
 streak_interval = 1
-scale = 0
+scale = 1
 flags = {
 	"run": True,
 	"export_scores": True, # Write raw score data
 	"export_archive": True, # Write formatted scoring list
-	"export_scraped": True # Write scraped data including images and json
+	"export_scraped": True, # Write scraped data including images and json
+	"correct_scores": False # Correct scoring based on human-created "correction" json
 }
 now = datetime.now()
 date = str(now.month) + "." + str(now.day) + "." + str(now.year)
@@ -57,7 +58,8 @@ def query(filter, string, progress = 0):
 
 def format(string):
 	# Enforce at least one space between progress marker and text
-	if string[1] != " ":
+	valid = ["+", "-"]
+	if string[1] != " " and (string[0] in valid):
 		string = string[0:1] + " " + string[1:]
 	return string
 
@@ -80,10 +82,10 @@ def process(post, count):
 		raise Exception("Bad image URL")
 	# Get data from fields
 	comment = post["com"]
-	dev["game"] = query("Game:(.*?)<br>", comment)
-	dev["name"] = query("Dev:(.*?)<br>", comment)
-	dev["tools"] = query("Tools:(.*?)<br>", comment)
-	dev["web"] = query("Web:(.*?)<br>", comment)
+	dev["game"] = query("Game:(.*?)<br>Dev:", comment)
+	dev["name"] = query("Dev:(.*?)<br>Tools:", comment)
+	dev["tools"] = query("Tools:(.*?)<br>Web:", comment)
+	dev["web"] = query("Web:(.*?)<br>Progress:", comment)
 	dev["progress"] = []
 	list = query("Progress:<br>(.*?)(?=[<][a]|$)", comment, 1)
 	for item in list:
@@ -121,7 +123,7 @@ def scoring(dev):
 		score = score + int(score_interval * scale * mult)
 		if not returning:
 			mult = mult + (mult_interval * scale)
-		clamp(mult, max_mult, -1)
+		mult = clamp(mult, max_mult, -1)
 		streak = streak + (streak_interval * scale)
 	# Store new score data
 	dict["score"] = str(score)
@@ -129,10 +131,6 @@ def scoring(dev):
 	dict["streak"] = str(streak)
 	dict["reset"] = str(reset)
 	dict["inactive"] = str(inactive)
-	scoring = str(score) + " [x" + str(mult) + "]"
-	if streak > 1:
-		scoring = scoring + " - " + str(streak) + " streak"
-	dev["scoring"] = scoring
 
 if flags.get("run"):
 	# Load scoring data
@@ -156,20 +154,51 @@ if flags.get("run"):
 		if thread.status_code != success:
 			raise Exception("Bad thread URL")
 		# Process thread data
-		print(newl + "[ Thread: " + num + " ]")
+		print(newl + "[Thread: " + num + "]")
 		newl = "\n"
 		data = json.loads(thread.text)
 		for post in data["posts"]:
 			if ("com" in post) and (recap in post["com"]) and not (exclude in post["com"]):
 				count += 1
 				dev = process(post, count)
-				scoring(dev)
+				if not flags.get("correct_scores"):
+					scoring(dev)
+				score = int(score_dict[dev["game"]].get("score"))
+				mult = float(score_dict[dev["game"]].get("mult"))
+				streak = int(score_dict[dev["game"]].get("streak"))
+				scoring = str(score) + " [x" + str(mult) + "]"
+				if streak > 1:
+					scoring = scoring + " - " + str(streak) + " streak"
+				dev["scoring"] = scoring
 				# Skip duplicate entries
 				if not (dev["game"] in ignore):
 					ignore.append(dev["game"])
 				else:
 					continue
 				devs.append(dev)
+
+if flags.get("correct_scores"):
+	with open("correct.json") as file:
+		correction_dict = json.load(file)
+		for game, dict in correction_dict.items():
+			orig_score = int(score_dict[game].get("score"))
+			orig_mult = float(score_dict[game].get("mult"))
+			orig_streak = int(score_dict[game].get("streak"))
+			increase = 0
+			for ghost in dict["ghosts"]:
+				for dev in devs:
+					if dev["game"] == ghost:
+						orig_score += int((score_interval * scale) * orig_mult)
+						score_dict[game]["score"] = str(orig_score)
+						score_dict[game]["mult"] = str(orig_mult + (mult_interval * scale))
+						score_dict[game]["streak"] = str(orig_streak + scale)
+						score_dict[game]["reset"] = "1"
+						score_dict[game]["inactive"] = "0"
+						score_dict[ghost]["score"] = "0" # Don't increase their score twice
+						dev["scoring"] = str(orig_score) + " [x" + score_dict[game].get("mult")"] - " + score_dict[game].get("streak") + " streak"
+				increase += int(score_dict[ghost].get("score"))
+				del score_dict[ghost]
+			score_dict[game]["score"] = str(orig_score + increase)
 
 if flags.get("export_scraped"):
 	if not os.path.isdir(parent):
