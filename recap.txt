@@ -1,8 +1,8 @@
--------- AGDG Weekly Recap --------
-Fill out the form to be a part of the weekly progress recap. Be sure to check out the "read me" link for important information on scoring and formatting.
+--------- AGDG Weekly Recap
+Fill out the form to be a part of the weekly progress recap.
 Submissions will be accepted for at least the next 36 hours.
 
--------- Format
+--------- Format
 ----[ Recap ]----
 Game:
 Dev:
@@ -12,12 +12,8 @@ Progress:
 + ...
 - ...
 
+--------- Links
+Site: recap.agdg.io
+Last recap: recap.agdg.io/view?id=17074
+
 ----[ Recap Complete ]----
-
--------- Links
-Read me: pastebin.com/QA047M2e
-Recap archive: dropbox.com/sh/icm5ng2zs8p24uh/AACC61OsXzCgl6-9Vdwb4sRAa
-Scores archive: pastebin.com/AmFmLeAy
-
--------- Feedback
-Notice something wrong with your entry, score, or anything else? Let me know and I'll look into it.

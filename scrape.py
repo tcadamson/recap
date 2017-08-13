@@ -10,7 +10,7 @@ import os
 success = 200
 img_url_clip = 22
 recap = "----[ Recap ]----"
-exclude = "-------- AGDG Weekly Recap --------"
+exclude = "--------- AGDG Weekly Recap"
 score_interval = 5
 mult_interval = 0.5
 max_mult = 10.0
@@ -20,7 +20,8 @@ flags = {
 	"run": True,
 	"export_scores": True, # Write raw score data
 	"export_archive": True, # Write formatted scoring list
-	"export_scraped": True, # Write scraped data including images and json
+	"export_images": True, # Write scraped images
+	"export_data": True, # Write scraped data json
 	"correct_scores": False # Correct scoring based on human-created "correction" json
 }
 now = datetime.now()
@@ -76,10 +77,11 @@ def process(post, count):
 		if post["ext"] == ".webm":
 			dev["ext"] = "s.jpg"
 		url = url + dev["ext"]
-	dev["image"] = get(url)
-	print("Fetch: " + dev["tim"] + dev["ext"] + " [" + str(count).zfill(2) + "]")
-	if dev["image"].status_code != success:
-		raise Exception("Bad image URL")
+	if flags.get("export_images"):
+		dev["image"] = get(url)
+		print("Fetch: " + dev["tim"] + dev["ext"] + " [" + str(count).zfill(2) + "]")
+		if dev["image"].status_code != success:
+			raise Exception("Bad image URL")
 	# Get data from fields
 	comment = post["com"]
 	dev["game"] = query("Game:(.*?)<br>Dev:", comment)
@@ -96,7 +98,7 @@ def process(post, count):
 	dev["*game"] = query("\*Game:(.*?)<br>", comment, 0)
 	return dev
 
-def scoring(dev):
+def devScoring(dev):
 	new = False
 	returning = False
 	# Check if game exists in database. If it does, use title case of entry
@@ -131,9 +133,15 @@ def scoring(dev):
 	dict["streak"] = str(streak)
 	dict["reset"] = str(reset)
 	dict["inactive"] = str(inactive)
+	scoring = str(score) + " [x" + str(mult) + "]"
+	if streak > 1:
+		scoring = scoring + " - " + str(streak) + " streak"
+	dev["scoring"] = scoring
 
 if flags.get("run"):
 	# Load scoring data
+	if flags.get("correct_scores"):
+		scale = 0
 	with open("scores.json") as file:
 		score_dict = json.load(file)
 		for game, dict in score_dict.items():
@@ -161,15 +169,7 @@ if flags.get("run"):
 			if ("com" in post) and (recap in post["com"]) and not (exclude in post["com"]):
 				count += 1
 				dev = process(post, count)
-				if not flags.get("correct_scores"):
-					scoring(dev)
-				score = int(score_dict[dev["game"]].get("score"))
-				mult = float(score_dict[dev["game"]].get("mult"))
-				streak = int(score_dict[dev["game"]].get("streak"))
-				scoring = str(score) + " [x" + str(mult) + "]"
-				if streak > 1:
-					scoring = scoring + " - " + str(streak) + " streak"
-				dev["scoring"] = scoring
+				devScoring(dev)
 				# Skip duplicate entries
 				if not (dev["game"] in ignore):
 					ignore.append(dev["game"])
@@ -184,30 +184,39 @@ if flags.get("correct_scores"):
 			orig_score = int(score_dict[game].get("score"))
 			orig_mult = float(score_dict[game].get("mult"))
 			orig_streak = int(score_dict[game].get("streak"))
+			orig_inactive = int(score_dict[game].get("inactive"))
 			increase = 0
 			for ghost in dict["ghosts"]:
 				for dev in devs:
 					if dev["game"] == ghost:
-						orig_score += int((score_interval * scale) * orig_mult)
+						orig_score += int((score_interval) * orig_mult)
+						if orig_inactive > 1:
+							orig_streak = 0
+						else:
+							orig_mult += mult_interval
+						orig_streak += 1
 						score_dict[game]["score"] = str(orig_score)
-						score_dict[game]["mult"] = str(orig_mult + (mult_interval * scale))
-						score_dict[game]["streak"] = str(orig_streak + scale)
+						score_dict[game]["mult"] = str(orig_mult)
+						score_dict[game]["streak"] = str(orig_streak)
 						score_dict[game]["reset"] = "1"
 						score_dict[game]["inactive"] = "0"
 						score_dict[ghost]["score"] = "0" # Don't increase their score twice
-						dev["scoring"] = str(orig_score) + " [x" + score_dict[game].get("mult")"] - " + score_dict[game].get("streak") + " streak"
+						dev["scoring"] = str(orig_score) + " [x" + score_dict[game].get("mult") + "]"
+						if orig_streak > 1:
+							dev["scoring"] = dev["scoring"] + " - " + str(orig_streak) + " streak"
 				increase += int(score_dict[ghost].get("score"))
 				del score_dict[ghost]
 			score_dict[game]["score"] = str(orig_score + increase)
 
-if flags.get("export_scraped"):
+if flags.get("export_data"):
 	if not os.path.isdir(parent):
 		os.makedirs(parent)
 		os.makedirs(parent + "/images")
 	data = {}
 	for dev in devs:
-		with open(parent + "/images/" + dev["tim"] + dev["ext"], "wb") as output:
-			output.write(dev["image"].content)
+		if flags.get("export_images"):
+			with open(parent + "/images/" + dev["tim"] + dev["ext"], "wb") as output:
+				output.write(dev["image"].content)
 		temp = {}
 		temp["game"] = dev["game"]
 		temp["name"] = dev["name"]
