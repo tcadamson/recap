@@ -1,8 +1,7 @@
---------- AGDG Weekly Recap
+-------- AGDG Weekly Recap --------
 Fill out the form to be a part of the weekly progress recap.
 Submissions will be accepted for at least the next 36 hours.
 
---------- Format
 ----[ Recap ]----
 Game:
 Dev:
@@ -12,8 +11,5 @@ Progress:
 + ...
 - ...
 
---------- Links
 Site: recap.agdg.io
-Last recap: recap.agdg.io/view?id=17074
-
-----[ Recap Complete ]----
+Last recap: recap.agdg.io/view?id=17082

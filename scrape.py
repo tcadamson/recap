@@ -10,7 +10,8 @@ import os
 success = 200
 img_url_clip = 22
 recap = "----[ Recap ]----"
-exclude = "--------- AGDG Weekly Recap"
+exclude = "-------- AGDG Weekly Recap --------"
+wildcard = "October"
 score_interval = 5
 mult_interval = 0.5
 max_mult = 10.0
@@ -22,7 +23,6 @@ flags = {
 	"export_archive": True, # Write formatted scoring list
 	"export_images": True, # Write scraped images
 	"export_data": True, # Write scraped data json
-	"correct_scores": False # Correct scoring based on human-created "correction" json
 }
 now = datetime.now()
 date = str(now.month) + "." + str(now.day) + "." + str(now.year)
@@ -64,6 +64,13 @@ def format(string):
 		string = string[0:1] + " " + string[1:]
 	return string
 
+def validate(wildcard):
+	valid = ["bat", "pumpkin", "ghost"]
+	output = wildcard.lower().strip()
+	if not output in valid:
+		output = "pumpkin"
+	return output
+
 def process(post, count):
 	dev = {}
 	# Get correct image
@@ -84,10 +91,12 @@ def process(post, count):
 			raise Exception("Bad image URL")
 	# Get data from fields
 	comment = post["com"]
-	dev["game"] = query("Game:(.*?)<br>Dev:", comment)
-	dev["name"] = query("Dev:(.*?)<br>Tools:", comment)
+	dev["game"] = query("<br>Game:(.*?)<br>", comment)
+	dev["name"] = query("Dev:(.*?)<br>", comment)
 	dev["tools"] = query("Tools:(.*?)<br>Web:", comment)
-	dev["web"] = query("Web:(.*?)<br>Progress:", comment)
+	dev["web"] = query("Web:(.*?)<br>" + (wildcard or "Progress") + ":", comment)
+	if wildcard:
+		dev["wildcard"] = validate(query(wildcard + ":(.*?)<br>", comment))
 	dev["progress"] = []
 	list = query("Progress:<br>(.*?)(?=[<][a]|$)", comment, 1)
 	for item in list:
@@ -95,7 +104,7 @@ def process(post, count):
 			if string != "":
 				dev["progress"].append(format(string))
 	# Optional form args
-	dev["*game"] = query("\*Game:(.*?)<br>", comment, 0)
+	dev["*game"] = query("\*Game:(.*?)<br>", comment)
 	return dev
 
 def devScoring(dev):
@@ -140,8 +149,6 @@ def devScoring(dev):
 
 if flags.get("run"):
 	# Load scoring data
-	if flags.get("correct_scores"):
-		scale = 0
 	with open("scores.json") as file:
 		score_dict = json.load(file)
 		for game, dict in score_dict.items():
@@ -177,37 +184,6 @@ if flags.get("run"):
 					continue
 				devs.append(dev)
 
-if flags.get("correct_scores"):
-	with open("correct.json") as file:
-		correction_dict = json.load(file)
-		for game, dict in correction_dict.items():
-			orig_score = int(score_dict[game].get("score"))
-			orig_mult = float(score_dict[game].get("mult"))
-			orig_streak = int(score_dict[game].get("streak"))
-			orig_inactive = int(score_dict[game].get("inactive"))
-			increase = 0
-			for ghost in dict["ghosts"]:
-				for dev in devs:
-					if dev["game"] == ghost:
-						orig_score += int((score_interval) * orig_mult)
-						if orig_inactive > 1:
-							orig_streak = 0
-						else:
-							orig_mult += mult_interval
-						orig_streak += 1
-						score_dict[game]["score"] = str(orig_score)
-						score_dict[game]["mult"] = str(orig_mult)
-						score_dict[game]["streak"] = str(orig_streak)
-						score_dict[game]["reset"] = "1"
-						score_dict[game]["inactive"] = "0"
-						score_dict[ghost]["score"] = "0" # Don't increase their score twice
-						dev["scoring"] = str(orig_score) + " [x" + score_dict[game].get("mult") + "]"
-						if orig_streak > 1:
-							dev["scoring"] = dev["scoring"] + " - " + str(orig_streak) + " streak"
-				increase += int(score_dict[ghost].get("score"))
-				del score_dict[ghost]
-			score_dict[game]["score"] = str(orig_score + increase)
-
 if flags.get("export_data"):
 	if not os.path.isdir(parent):
 		os.makedirs(parent)
@@ -222,6 +198,8 @@ if flags.get("export_data"):
 		temp["name"] = dev["name"]
 		temp["tools"] = dev["tools"]
 		temp["web"] = dev["web"]
+		if wildcard:
+			temp["wildcard"] = dev["wildcard"]
 		temp["scoring"] = dev["scoring"]
 		temp["ext"] = dev["ext"]
 		temp["progress"] = dev["progress"]
