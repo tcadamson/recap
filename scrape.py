@@ -3,7 +3,7 @@ from requests import get
 from sys import argv
 import json
 import shutil
-import json
+import random
 import re
 import os
 
@@ -65,10 +65,13 @@ def format(string):
 	return string
 
 def validate(wildcard):
-	valid = ["bat", "pumpkin", "ghost"]
+	valid = ["bat", "pumpkin", "ghost", "tombstone", "skeleton"]
 	output = wildcard.lower().strip()
 	if not output in valid:
-		output = "pumpkin"
+		if output == "random":
+			output = random.choice(valid)
+		else:
+			output = "pumpkin"
 	return output
 
 def process(post, count):
@@ -93,8 +96,8 @@ def process(post, count):
 	comment = post["com"]
 	dev["game"] = query("<br>Game:(.*?)<br>", comment)
 	dev["name"] = query("Dev:(.*?)<br>", comment)
-	dev["tools"] = query("Tools:(.*?)<br>Web:", comment)
-	dev["web"] = query("Web:(.*?)<br>" + (wildcard or "Progress") + ":", comment)
+	dev["tools"] = query("Tools:(.*?)<br>", comment)
+	dev["web"] = query("Web:(.*?)<br>", comment)
 	if wildcard:
 		dev["wildcard"] = validate(query(wildcard + ":(.*?)<br>", comment))
 	dev["progress"] = []
@@ -174,12 +177,12 @@ if flags.get("run"):
 		data = json.loads(thread.text)
 		for post in data["posts"]:
 			if ("com" in post) and (recap in post["com"]) and not (exclude in post["com"]):
-				count += 1
 				dev = process(post, count)
-				devScoring(dev)
 				# Skip duplicate entries
 				if not (dev["game"] in ignore):
 					ignore.append(dev["game"])
+					count += 1
+					devScoring(dev)
 				else:
 					continue
 				devs.append(dev)
