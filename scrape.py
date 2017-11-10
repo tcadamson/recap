@@ -11,7 +11,7 @@ success = 200
 img_url_clip = 22
 recap = "----[ Recap ]----"
 exclude = "-------- AGDG Weekly Recap --------"
-wildcard = "October"
+wildcard = ""
 score_interval = 5
 mult_interval = 0.5
 max_mult = 10.0
@@ -42,13 +42,9 @@ def query(filter, string, progress = 0):
 	try:
 		result = re.search(filter, string).group(1).strip()
 		# Replace special characters
-		result = result.replace("&gt;", ">")
-		result = result.replace("&lt;", "<")
-		result = result.replace("&quot;", "\"")
-		result = result.replace("&#039;", "\'")
-		result = result.replace("<wbr>", "")
-		result = result.replace("&amp;", "&")
-		result = result.replace("</span>", "")
+		pairs = {"&gt;": ">", "&lt;": "<", "&quot;": "\"", "&#039;": "\'", "<wbr>": "", "&amp;": "&", "</span>": ""}
+		for key in pairs:
+			result = result.replace(key, pairs[key])
 		if progress:
 			temp = result
 			filter = "(.*?)<br>|(.*?)$"
@@ -65,7 +61,7 @@ def format(string):
 	return string
 
 def validate(wildcard):
-	valid = ["bat", "pumpkin", "ghost", "tombstone", "skeleton"]
+	valid = ["bat", "pumpkin", "ghost", "tombstone", "skeleton", "witch"]
 	output = wildcard.lower().strip()
 	if not output in valid:
 		if output == "random":
