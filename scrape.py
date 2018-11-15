@@ -1,262 +1,230 @@
-from datetime import datetime
-from requests import get
-from sys import argv
-import json
-import shutil
-import random
-import re
 import os
-
-success = 200
-img_url_clip = 22
-recap = "----[ Recap ]----"
-exclude = "-------- AGDG Weekly Recap --------"
-wildcard = ""
-score_interval = 5
-mult_interval = 0.5
-max_mult = 10.0
-streak_interval = 1
-scale = 1
-flags = {
-	"run": True,
-	"export_scores": True, # Write raw score data
-	"export_archive": True, # Write formatted scoring list
-	"export_images": True, # Write scraped images
-	"export_data": True, # Write scraped data json
+import re
+import json
+import math
+import time
+import cfscrape
+import datetime
+from init import read_json, write_json
+from dataclasses import dataclass, asdict, field
+scraper = cfscrape.create_scraper()
+orig = datetime.datetime.strptime("16:10:10", "%y:%m:%d")
+urls = {
+    "media": "https://i.4cdn.org/vg/{file}",
+    "thread": "https://a.4cdn.org/vg/thread/{int}.json",
+    "threads": "https://a.4cdn.org/vg/threads.json",
+    "archive": "https://a.4cdn.org/vg/archive.json"
 }
-now = datetime.now()
-date = str(now.month) + "." + str(now.day) + "." + str(now.year)
-parent = str(now.year) + "/" + date
-fake_time = 1483976641887
-devs = [] # Container for all devs participating this week
-ignore = [] # Set of game names to ignore for this pass if people submit entries twice for some reason
-score_dict = {}
+regs = {
+    "title": re.compile("(?<=^::).+?(?=::)"),
+    "field": re.compile("(?<=>)[^>]*?(?=::)"),
+    "content": re.compile("(?<=::).+?(?=[\w\s]{1,}::|$)"),
+    "web": re.compile("[-\w]+\.\w{2,}.*?(?=[,<\s]|$)"),
+    "stub": re.compile("(?<=\">)[^<]+"),
+    "outer": re.compile("<[as].+?[an]>")
+}
+logs = {
+    "fetch": "Fetch: {file} [{count}]",
+    "thread": "[Thread: {int}]"
+}
+replace = {
+    "&lt;": "<",
+    "&gt;": ">",
+    "&quot;": "\"",
+    "&#039;": "\'",
+    "&amp;": "&",
+    "<wbr>": ""
+}
+fields = [
+    "dev",
+    "tools",
+    "web",
+    "progress"
+]
 
-def clamp(arg, value, flip = 1):
-	if (arg * flip) < (value * flip):
-		return value
-	else:
-		return arg
+@dataclass
+class game:
+    dev: str = ""
+    tools: str = ""
+    web: str = ""
+    score: list = field(default_factory = list)
+    alias: list = field(default_factory = list)
 
-def query(filter, string, progress = 0):
-	try:
-		result = re.search(filter, string).group(1).strip()
-		# Replace special characters
-		pairs = {"&gt;": ">", "&lt;": "<", "&quot;": "\"", "&#039;": "\'", "<wbr>": "", "&amp;": "&", "</span>": ""}
-		for key in pairs:
-			result = result.replace(key, pairs[key])
-		if progress:
-			temp = result
-			filter = "(.*?)<br>|(.*?)$"
-			result = re.findall(filter, temp)
-	except AttributeError:
-		result = ""
-	return result
+@dataclass
+class score:
+    stamp: int
+    streak: int = 0
+    count: int = 0
 
-def format(string):
-	# Enforce at least one space between progress marker and text
-	valid = ["+", "-"]
-	if string[1] != " " and (string[0] in valid):
-		string = string[0:1] + " " + string[1:]
-	return string
+    def format(self):
+        order = [getattr(self, i) for i in ["stamp", "streak", "count"]]
+        return ":".join([str(i) for i in order if i >= 0])
 
-def validate(wildcard):
-	valid = ["bat", "pumpkin", "ghost", "tombstone", "skeleton", "witch"]
-	output = wildcard.lower().strip()
-	if not output in valid:
-		if output == "random":
-			output = random.choice(valid)
-		else:
-			output = "pumpkin"
-	return output
+def log(code, **args):
+    print(logs[code].format(**args))
 
-def process(post, count):
-	dev = {}
-	# Get correct image
-	url = "https://my.mixtape.moe/scaxyw.png"
-	dev["tim"] = str(fake_time + 1)
-	dev["ext"] = ".png"
-	if ("tim" in post):
-		url = "https://i.4cdn.org/vg/" + str(post["tim"])
-		dev["tim"] = str(post["tim"])
-		dev["ext"] = post["ext"]
-		if post["ext"] == ".webm":
-			dev["ext"] = "s.jpg"
-		url = url + dev["ext"]
-	if flags.get("export_images"):
-		dev["image"] = get(url)
-		print("Fetch: " + dev["tim"] + dev["ext"] + " [" + str(count).zfill(2) + "]")
-		if dev["image"].status_code != success:
-			raise Exception("Bad image URL")
-	# Get data from fields
-	comment = post["com"]
-	dev["game"] = query("<br>Game:(.*?)<br>", comment)
-	dev["name"] = query("Dev:(.*?)<br>", comment)
-	dev["tools"] = query("Tools:(.*?)<br>", comment)
-	dev["web"] = query("Web:(.*?)<br>", comment)
-	if wildcard:
-		dev["wildcard"] = validate(query(wildcard + ":(.*?)<br>", comment))
-	dev["progress"] = []
-	list = query("Progress:<br>(.*?)(?=[<][a]|$)", comment, 1)
-	for item in list:
-		for string in item:
-			if string != "":
-				dev["progress"].append(format(string))
-	# Optional form args
-	dev["*game"] = query("\*Game:(.*?)<br>", comment)
-	return dev
+def parse_reg(reg, com):
+    # transform quotelinks into expected form
+    stubs = regs["stub"].findall(com)
+    for q in regs["outer"].findall(com):
+        com = com.replace(q, stubs.pop(0))
+    # remove leading and trailing line breaks
+    return [re.sub("^[<br>\s]{1,}br>\s*(?=\S)|\s*<br[<br>\s]{1,}$", "", i).strip() for i in regs[reg].findall(com)]
 
-def devScoring(dev):
-	new = False
-	returning = False
-	# Check if game exists in database. If it does, use title case of entry
-	for name, data in score_dict.items():
-		if name.upper() == dev["game"].upper():
-			dev["game"] = name
-	if not dev["game"] in score_dict:
-		new = True
-		score_dict[dev["game"]] = {"score": 5, "mult": 1.0, "streak": 1, "reset": 0, "inactive": 0}
-	# Check for game title change
-	if (dev["*game"] != ""):
-		score_dict[dev["*game"]] = score_dict[dev["game"]]
-		del score_dict[dev["game"]]
-		dev["game"] = dev["*game"]
-	# Get score data for game and perform necessary calculations
-	dict = score_dict[dev["game"]]
-	score, mult, streak, reset, active = int(dict.get("score")), float(dict.get("mult")), int(dict.get("streak")), int(dict.get("reset")), int(dict.get("inactive"))
-	if reset < 0:
-		returning = True
-		reset, mult, streak = 0, 1.0, 0
-	reset = reset + scale
-	inactive = 0
-	if not new:
-		score = score + int(score_interval * scale * mult)
-		if not returning:
-			mult = mult + (mult_interval * scale)
-		mult = clamp(mult, max_mult, -1)
-		streak = streak + (streak_interval * scale)
-	# Store new score data
-	dict["score"] = str(score)
-	dict["mult"] = str(mult)
-	dict["streak"] = str(streak)
-	dict["reset"] = str(reset)
-	dict["inactive"] = str(inactive)
-	scoring = str(score) + " [x" + str(mult) + "]"
-	if streak > 1:
-		scoring = scoring + " - " + str(streak) + " streak"
-	dev["scoring"] = scoring
+def resolve(title):
+    for t, g in gs.items():
+        if title in g.alias:
+            return t
+    return title
 
-if flags.get("run"):
-	# Load scoring data
-	with open("scores.json") as file:
-		score_dict = json.load(file)
-		for game, dict in score_dict.items():
-			dict["reset"] = str(clamp(int(dict["reset"]) - scale, -1))
-			dict["inactive"] = str(int(dict["inactive"]) + scale)
-	# In case of a Happy New Year
-	if not os.path.isdir(str(now.year)):
-		os.makedirs(str(now.year))
-	# Get threads to scrape, then scrape them
-	count = 0
-	newl = ""
-	threads = open("threads.txt", "r").readlines()
-	for thread in threads:
-		num = thread.rstrip()
-		url = "https://a.4cdn.org/vg/thread/" + num + ".json"
-		# Fetch thread URL data
-		thread = get(url)
-		if thread.status_code != success:
-			raise Exception("Bad thread URL")
-		# Process thread data
-		print(newl + "[Thread: " + num + "]")
-		newl = "\n"
-		data = json.loads(thread.text)
-		for post in data["posts"]:
-			if ("com" in post) and (recap in post["com"]) and not (exclude in post["com"]):
-				dev = process(post, count)
-				# Skip duplicate entries
-				if not (dev["game"] in ignore):
-					ignore.append(dev["game"])
-					count += 1
-					devScoring(dev)
-				else:
-					continue
-				devs.append(dev)
+def gen_stamp(time):
+    test = datetime.datetime.fromtimestamp(time)
+    test = test.replace(hour = 0, minute = 0, second = 0)
+    index = (test - orig).days // datetime.timedelta(weeks = 1).days
+    return stamps["all"][index]
 
-if flags.get("export_data"):
-	if not os.path.isdir(parent):
-		os.makedirs(parent)
-		os.makedirs(parent + "/images")
-	data = {}
-	for dev in devs:
-		if flags.get("export_images"):
-			with open(parent + "/images/" + dev["tim"] + dev["ext"], "wb") as output:
-				output.write(dev["image"].content)
-		temp = {}
-		temp["game"] = dev["game"]
-		temp["name"] = dev["name"]
-		temp["tools"] = dev["tools"]
-		temp["web"] = dev["web"]
-		if wildcard:
-			temp["wildcard"] = dev["wildcard"]
-		temp["scoring"] = dev["scoring"]
-		temp["ext"] = dev["ext"]
-		temp["progress"] = dev["progress"]
-		data[dev["tim"]] = temp
-	open(parent + "/data.json", "w").close()
-	with open(parent + "/data.json", "w") as output:
-		json.dump(data, output, indent = 4)
+def gen_score(title, stamp):
+    g = gs[title]
+    recent = g.score.pop()
+    start = stamps["all"].index(recent.stamp)
+    end = start + recent.streak
+    new = recent.streak == 0
+    # after streak broken
+    if end < stamps["all"].index(stamp):
+        g.score.append(recent)
+        recent = score(stamp, 1)
+    # in new week, streak not broken
+    elif new or stamp != recent.stamp and not rs[stamp][title]:
+        recent.streak += 1
+    recent.count += 1
+    g.score.append(recent)
 
-if flags.get("export_scores"):
-	open("scores.json", "w").close()
-	with open("scores.json", "w") as output:
-		json.dump(score_dict, output, indent = 4)
-	# Store copy in week folder and root folder
-	shutil.copy2("scores.json", parent + "/scores.json")
+def gen_file(file, stamp):
+    # file is the 4chan filename + ext, e.g. 1344402680740.png
+    path = "res/{0}/".format(stamp)
+    os.makedirs(path, exist_ok = True)
+    log("fetch", file = file, count = len(rs[stamp]))
+    if not "default" in file:
+        with open(path + file, "wb") as f:
+            f.write(scraper.get(urls["media"].format(file = file)).content)
 
-def tier_iter(range_token, set, last_tier = False):
-	output.write(range_token + "\n")
-	sort = {}
-	for game in set:
-		sort[game] = int(score_dict[game].get("score"))
-	sort = sorted(sort, key = sort.get, reverse = True)
-	newl = ""
-	for game in sort:
-		output.write(newl + score_dict[game].get("score") + "  --  " + game)
-		newl = "\n"
-		if (int(score_dict[game].get("reset")) > 0) and (float(score_dict[game].get("mult")) > 1):
-			output.write(" (x" + score_dict[game].get("mult") + ", " + score_dict[game].get("streak") + " streak)")
-	if not last_tier:
-		output.write("\n\n")
+def gen_title(title, stamp):
+    split = [i.strip() for i in title.split("<")]
+    if len(split) > 1:
+        title, alias = resolve(split[0]), split[1]
+        # don't retitle a game that is being registered
+        # gs[title] = gs.pop(old, {}) breaks gs.setdefault(title, game(**zipped))
+        if title in gs:
+            if not alias in gs[title].alias:
+                gs[title].alias.append(alias)
+        else:
+            title = alias
+    rs.setdefault(stamp, read_json("res/{0}/data.json".format(stamp)))
+    rs[stamp].setdefault(title, {})
+    return title
 
-def load_tiers(check_inactive):
-	tier_1 = [] # 1 to 199
-	tier_2 = [] # 200 - 499
-	tier_3 = [] # 500 - 999
-	tier_4 = [] # 1000+
-	for game, dev_dict in score_dict.items():
-		inactive, score = int(dev_dict.get("inactive")), int(dev_dict.get("score"))
-		def append_check(game):
-			if score < 200:
-				tier_1.append(game)
-			elif score >= 200 and score < 499:
-				tier_2.append(game)
-			elif score >= 500 and score < 999:
-				tier_3.append(game)
-			elif score > 1000:
-				tier_4.append(game)
-		if check_inactive:
-			if inactive <= 3:
-				append_check(game)
-		else:
-			append_check(game)
-	return {"one": tier_1, "two": tier_2, "three": tier_3, "four": tier_4}
+def gen_pairs(fs, vs):
+    out = {}
+    for f, v in dict(zip(fs, vs)).items():
+        f = f.lower()
+        if f in fields and v:
+            out[f] = v
+    return out
 
-if flags.get("export_archive"):
-	open("scores.txt", "w").close()
-	with open("scores.txt", "w") as output:
-		tiers = load_tiers(False)
-		tier_iter("[ 1000+ ]", tiers.get("four"))
-		tier_iter("[ 500 - 999 ]", tiers.get("three"))
-		tier_iter("[ 200 - 499 ]", tiers.get("two"))
-		tier_iter("[ 1 - 199 ]", tiers.get("one"), True)
+def scrape(thread):
+    # scraper will only process posts containing a title surrounded by ::
+    # once confirmed, remove title (including ::) and all preceding text to simplify field regex
+    for post in thread["posts"]:
+        com = post.get("com", "")
+        # convert character codes to their actual characters
+        for char, to in replace.items():
+            com = com.replace(char, to)
+        test = parse_reg("title", com)
+        if test:
+            test = test.pop()
+            com = re.sub(".*{0}.*?::".format(test), "", com)
+            file = "{0}{1}".format(post["tim"], post["ext"]) if post.get("tim") else "default.png"
+            stamp = gen_stamp(post["time"])
+            title = gen_title(resolve(test), stamp)
+            pairs = gen_pairs(parse_reg("field", com), parse_reg("content", com))
+            progress = re.sub("[>\s]+([+/-]+)\s{0}(?=\w)", ">\g<1> ", ">{0}".format(pairs.pop("progress", "")))[1:]
+            if title in blacklist:
+                if title in gs:
+                    del rs[stamp][title]
+                    del gs[title]
+                continue
+            if pairs or progress:
+                # users can freely overwrite dev, tools, web fields
+                gs.setdefault(title, game(**pairs))
+                g = gs[title]
+                for field, content in pairs.items():
+                    if hasattr(g, field):
+                        setattr(g, field, re.sub(",(?=[^<\s])|[,\s]*<br>\s*", ", ", content))
+                links = parse_reg("web", g.web.replace("@", "twitter.com/"))
+                g.web = "<br>".join([i[:-1] if i.endswith("/") else i for i in links])
+                # collection of file:progress pairs under a registered title
+                # truncated file is time:tim(ms part).ext
+                if progress and not progress in rs[stamp][title].values():
+                    # live stamps are those stamps for which a recap exists
+                    # used to generate archive links on the site
+                    if not stamp in stamps["live"]:
+                        stamps["live"].append(stamp)
+                    if not g.score:
+                        g.score.append(score(stamp))
+                    gen_file(file, stamp)
+                    gen_score(title, stamp)
+                    file = file[10:] if post.get("tim") else file
+                    rs[stamp][title]["{0}:{1}".format(post["time"], file)] = progress
+
+# convert games to dataclasses for easy manipulation
+games = read_json("res/games.json")
+stamps = read_json("res/stamps.json")
+threads = read_json("res/threads.json")
+blacklist = "res/blacklist.txt"
+if os.path.isfile(blacklist):
+    blacklist = open(blacklist, "r").readlines()
+gs = {}
+rs = {}
+for title, d in games.items():
+    g = game(*d.values())
+    g.score = [score(*[int(j) for j in i.split(":")]) for i in g.score]
+    gs[title] = g
+
+# crawl archive and catalog for threads
+# only threads in archive are marked as seen
+# threads in catalog continually scraped until they are archived
+catalog = []
+for page in json.loads(scraper.get(urls["threads"]).text):
+    for thread in page["threads"]:
+        catalog.append(thread["no"])
+set1 = set(threads)
+set2 = set(json.loads(scraper.get(urls["archive"]).text) + catalog)
+threads = list(set2 - (set1 & set2))
+seen = list(set1 - (set1 - set2))
+for int in sorted(threads):
+    thread = json.loads(scraper.get(urls["thread"].format(int = int)).text)
+    op = thread["posts"][0]
+    if "agdg" in op.get("sub", "").lower():
+        if not int in seen:
+            if not int in catalog:
+                seen.append(int)
+            log("thread", int = int)
+            scrape(thread)
+    elif not int in seen:
+        seen.append(int)
+
+# convert dataclasses to JSON-legal format for file writing
+for title, g in gs.items():
+    g.score = [i.format() for i in g.score]
+    gs[title] = asdict(g)
+stamps["now"] = gen_stamp(time.time())
+write_json("res/games.json", gs)
+write_json("res/stamps.json", stamps)
+write_json("res/threads.json", seen)
+
+for stamp, r in rs.items():
+    # posts with fields/contents but invalid title leave an empty {}, here we prune them
+    r = {k:v for k, v in r.items() if v}
+    if r:
+        with open("res/{0}/data.json".format(stamp), "w") as f:
+            json.dump(r, f, separators = (",", ":"))
