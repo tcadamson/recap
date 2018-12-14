@@ -38,8 +38,9 @@ for stamp, recap in data.items():
         stats[title]["1"] = stats[title].get("1", 0) + 1
         stats[title]["words"] = stats[title].get("words", 0) + g_words
         net_words += g_words
-    progress += net_words / len(recap)
-    entries += len(recap)
+    num = len(recap)
+    progress += net_words / num if num > 0 else 0
+    entries += num
 
 def check_predefined(str):
     for id, reg in tool_regs.items():

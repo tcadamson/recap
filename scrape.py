@@ -16,7 +16,7 @@ urls = {
     "archive": "https://a.4cdn.org/vg/archive.json"
 }
 regs = {
-    "title": re.compile("(?<=^::).+?(?=::)"),
+    "title": re.compile("(?<=::).+?(?=::)"),
     "field": re.compile("(?<=>)[^>]*?(?=::)"),
     "content": re.compile("(?<=::).+?(?=[\w\s]{1,}::|$)"),
     "web": re.compile("[-\w]+\.\w{2,}.*?(?=[,<\s]|$)"),
@@ -141,8 +141,12 @@ def scrape(thread):
             com = com.replace(char, to)
         test = parse_reg("title", com)
         if test:
-            test = test.pop()
-            com = re.sub(".*{0}.*?::".format(test), "", com)
+            test = test.pop(0)
+            # escape any characters that will break re.sub
+            escaped = test
+            for char in ["[", "]"]:
+                escaped = escaped.replace(char, "\{0}".format(char))
+            com = re.sub(".*{0}.*?::".format(escaped), "", com)
             file = "{0}{1}".format(post["tim"], post["ext"]) if post.get("tim") else "default.png"
             stamp = gen_stamp(post["time"])
             title = gen_title(resolve(test), stamp)
@@ -160,7 +164,7 @@ def scrape(thread):
                 for field, content in pairs.items():
                     if hasattr(g, field):
                         setattr(g, field, re.sub(",(?=[^<\s])|[,\s]*<br>\s*", ", ", content))
-                links = parse_reg("web", g.web.replace("@", "twitter.com/"))
+                links = parse_reg("web", g.web.replace("@", "twitter.com/").replace("www", ""))
                 g.web = "<br>".join([i[:-1] if i.endswith("/") else i for i in links])
                 # collection of file:progress pairs under a registered title
                 # truncated file is time:tim(ms part).ext
