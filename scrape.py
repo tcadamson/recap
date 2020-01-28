@@ -21,7 +21,7 @@ regs = {
     "content": re.compile("(?<=::).+?(?=[\w\s]{1,}::|$)"),
     "web": re.compile("[-\w]+\.\w{2,}.*?(?=[,<\s]|$)"),
     "stub": re.compile("(?<=\">)[^<]+"),
-    "outer": re.compile("<[as].+?[an]>")
+    "outer": re.compile("<[as][^:]+?[an]>")
 }
 logs = {
     "fetch": "Fetch: {file} [{count}]",
@@ -142,11 +142,7 @@ def scrape(thread):
         test = parse_reg("title", com)
         if test:
             test = test.pop(0)
-            # escape any characters that will break re.sub
-            escaped = test
-            for char in ["[", "]"]:
-                escaped = escaped.replace(char, "\{0}".format(char))
-            com = re.sub(".*{0}.*?::".format(escaped), "", com)
+            com = re.sub(".*{0}.*?::".format(re.escape(test)), "", com)
             file = "{0}{1}".format(post["tim"], post["ext"]) if post.get("tim") else "default.png"
             stamp = gen_stamp(post["time"])
             title = gen_title(resolve(test), stamp)
